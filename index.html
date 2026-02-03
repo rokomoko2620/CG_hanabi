@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>線香花火 3D - Senko Hanabi</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { overflow: hidden; font-family: 'Hiragino Kaku Gothic Pro', 'Yu Gothic', sans-serif; background: #000; }
+        #canvas-container { position: fixed; top: 0; left: 0; width: 100%; height: 100%; }
+
+        #ui-panel {
+            position: fixed; top: 20px; right: 20px;
+            background: rgba(0, 0, 0, 0.8); padding: 20px; border-radius: 12px;
+            color: white; z-index: 100; min-width: 200px;
+            backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: opacity 0.3s, transform 0.3s;
+        }
+        #ui-panel.hidden { opacity: 0; pointer-events: none; transform: translateX(20px); }
+        #ui-panel h2 { font-size: 15px; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.2); font-weight: normal; }
+
+        .type-buttons { display: flex; flex-direction: column; gap: 6px; margin-bottom: 15px; }
+        .type-btn {
+            padding: 10px 12px; border: none; border-radius: 8px;
+            background: rgba(255, 255, 255, 0.08); color: white;
+            cursor: pointer; transition: all 0.3s; font-size: 12px; text-align: left;
+        }
+        .type-btn:hover { background: rgba(255, 255, 255, 0.15); }
+        .type-btn.active { background: rgba(255, 150, 50, 0.35); border-left: 3px solid #ff8c00; }
+        .type-btn .type-name { font-size: 13px; font-weight: bold; margin-bottom: 2px; }
+        .type-btn .type-desc { font-size: 10px; opacity: 0.6; }
+
+        #phase-display {
+            margin-bottom: 15px; padding: 12px;
+            background: rgba(255, 150, 50, 0.12); border-radius: 8px; text-align: center;
+        }
+        #phase-name { font-size: 36px; margin-bottom: 2px; }
+        #phase-reading { font-size: 10px; color: rgba(255, 255, 255, 0.45); margin-bottom: 5px; }
+        #phase-description { font-size: 10px; color: rgba(255, 255, 255, 0.55); }
+        #time-display { font-size: 15px; color: rgba(255, 200, 100, 0.9); margin-top: 10px; }
+
+        #start-btn {
+            width: 100%; padding: 14px; border: none; border-radius: 8px;
+            background: linear-gradient(135deg, #ff8c00, #ff5500); color: white;
+            cursor: pointer; font-size: 14px; transition: all 0.3s;
+        }
+        #start-btn:hover { background: linear-gradient(135deg, #ffa500, #ff7700); transform: scale(1.02); }
+        #start-btn:disabled { background: #333; cursor: not-allowed; transform: none; }
+
+        #toggle-ui-btn {
+            position: fixed; top: 20px; left: 20px; padding: 10px 16px;
+            border: none; border-radius: 20px; background: rgba(0, 0, 0, 0.6);
+            color: white; cursor: pointer; z-index: 101; font-size: 12px;
+            backdrop-filter: blur(10px); transition: all 0.3s;
+        }
+        #toggle-ui-btn:hover { background: rgba(50, 50, 50, 0.8); }
+
+        #instructions {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.5); padding: 10px 20px; border-radius: 20px;
+            color: rgba(255, 255, 255, 0.5); font-size: 11px; z-index: 100;
+            backdrop-filter: blur(5px); transition: opacity 0.3s;
+        }
+        #instructions.hidden { opacity: 0; pointer-events: none; }
+    </style>
+</head>
+<body>
+    <div id="canvas-container"></div>
+    <button id="toggle-ui-btn">UI 表示/非表示</button>
+
+    <div id="ui-panel">
+        <h2>🎇 線香花火 3D</h2>
+        <div class="type-buttons">
+            <button class="type-btn active" data-type="type1">
+                <div class="type-name">タイプ 1</div>
+                <div class="type-desc">枝分かれする火花・液滴が破裂して分岐</div>
+            </button>
+            <button class="type-btn" data-type="type2">
+                <div class="type-name">タイプ 2</div>
+                <div class="type-desc">シェーダー火花・滑らかな軌跡</div>
+            </button>
+            <button class="type-btn" data-type="type3">
+                <div class="type-name">タイプ 3</div>
+                <div class="type-desc">流星タイプ・尾を引く火花</div>
+            </button>
+        </div>
+        
+        <div id="phase-display">
+            <div id="phase-name">−</div>
+            <div id="phase-reading"></div>
+            <div id="phase-description">着火してください</div>
+            <div id="time-display"></div>
+        </div>
+        <button id="start-btn">🔥 着火</button>
+    </div>
+
+    <div id="instructions">左ドラッグ: 回転 ・ 右ドラッグ: 移動 ・ スクロール: ズーム</div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+
+    <!-- 火花システム -->
+    <script src="type1.js"></script>
+    <script src="type2.js"></script>
+    <script src="type3.js"></script>
+
+    <script>
+        // ============================================
+        // 線香花火の4段階
+        // ============================================
+        const PHASES = {
+            TSUBOMI: { name: '蕾', reading: 'つぼみ', description: '火の玉が静かに形作られる', color: '#ff6600' },
+            BOTAN: { name: '牡丹', reading: 'ぼたん', description: 'パチパチと力強い火花がはじける', color: '#ff8833' },
+            MATSUBA: { name: '松葉', reading: 'まつば', description: '火花が四方八方に激しく散る', color: '#ffaa44' },
+            CHIRIGIKU: { name: '散り菊', reading: 'ちりぎく', description: '一本また一本と静かに消えゆく', color: '#ff4400' }
+        };
+
+        // タイプ別設定
+        const HANABI_TYPES = {
+            type1: { name: 'タイプ 1', duration: [32, 45], sparkIntensity: 1.0, sparkRange: 4.0 },
+            type2: { name: 'タイプ 2', duration: [32, 45], sparkIntensity: 1.0, sparkRange: 4.0 },
+            type3: { name: 'タイプ 3', duration: [32, 45], sparkIntensity: 1.2, sparkRange: 4.0 }
+        };
+
+        let currentType = 'type1';
+
+        // ============================================
+        // 位置設定
+        // 火球が原点（画面中心）、取っ手が上に伸びる
+        // ============================================
+        const FIREBALL_POS = new THREE.Vector3(0, 0, 0);
+        const HANDLE_LENGTH = 2.5;
+
+        // ============================================
+        // Three.js 初期化
+        // ============================================
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(4, 1, 4);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.08;
+        controls.target.copy(FIREBALL_POS);
+        controls.minDistance = 1.5;
+        controls.maxDistance = 15;
+        controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+
+        // Bloom（控えめ設定）
+        const composer = new THREE.EffectComposer(renderer);
+        composer.addPass(new THREE.RenderPass(scene, camera));
+        const bloomPass = new THREE.UnrealBloomPass(
+            new THREE.Vector2(window.innerWidth, window.innerHeight),
+            1.0,    // strength
+            0.4,    // radius
+            0.9     // threshold（高めで暗い色は光らない）
+        );
+        composer.addPass(bloomPass);
+
+        // ============================================
+        // 背景
+        // ============================================
+        function createBackground() {
+            const skyGeo = new THREE.SphereGeometry(80, 32, 32);
+            const skyMat = new THREE.ShaderMaterial({
+                uniforms: {
+                    topColor: { value: new THREE.Color(0x0a0a18) },
+                    bottomColor: { value: new THREE.Color(0x020204) }
+                },
+                vertexShader: `
+                    varying vec3 vWorldPos;
+                    void main() {
+                        vec4 wp = modelMatrix * vec4(position, 1.0);
+                        vWorldPos = wp.xyz;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    uniform vec3 topColor, bottomColor;
+                    varying vec3 vWorldPos;
+                    void main() {
+                        float h = normalize(vWorldPos).y * 0.5 + 0.5;
+                        gl_FragColor = vec4(mix(bottomColor, topColor, h), 1.0);
+                    }
+                `,
+                side: THREE.BackSide
+            });
+            scene.add(new THREE.Mesh(skyGeo, skyMat));
+
+            // 星
+            const starGeo = new THREE.BufferGeometry();
+            const starCount = 400;
+            const pos = new Float32Array(starCount * 3);
+            for (let i = 0; i < starCount; i++) {
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.random() * Math.PI * 0.6;
+                const r = 60;
+                pos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+                pos[i * 3 + 1] = r * Math.cos(phi);
+                pos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+            }
+            starGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+            scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ 
+                color: 0xffffff, size: 0.1, transparent: true, opacity: 0.4 
+            })));
+        }
+        createBackground();
+
+        // ============================================
+        // 取っ手（固定、上に伸びる）
+        // ============================================
+        let handleGroup = null;
+        let handleTip = null;
+
+        function createHandle() {
+            handleGroup = new THREE.Group();
+
+            // 和紙の紙縒り（暗めの色）
+            const points = [];
+            const segments = 30;
+            for (let i = 0; i <= segments; i++) {
+                const t = i / segments;
+                const twist = Math.sin(t * Math.PI * 4) * 0.008 * (1 - t * 0.5);
+                // Y方向に上向きに伸びる
+                const y = t * HANDLE_LENGTH;
+                points.push(new THREE.Vector3(twist, y, Math.cos(t * Math.PI * 4) * 0.005));
+            }
+            const curve = new THREE.CatmullRomCurve3(points);
+            const geo = new THREE.TubeGeometry(curve, 25, 0.012, 8, false);
+            
+            // 暗めの茶色（Bloomで光らない）
+            const mat = new THREE.MeshBasicMaterial({ 
+                color: 0x554433,
+                transparent: true,
+                opacity: 0.8
+            });
+            const handle = new THREE.Mesh(geo, mat);
+            handleGroup.add(handle);
+
+            // 先端の火薬部分（原点に配置）
+            const tipGeo = new THREE.SphereGeometry(0.018, 8, 8);
+            tipGeo.scale(0.8, 1.2, 0.8);
+            const tipMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
+            handleTip = new THREE.Mesh(tipGeo, tipMat);
+            handleTip.position.set(0, 0, 0);
+            handleGroup.add(handleTip);
+
+            // 少し傾ける
+            handleGroup.rotation.z = 0.12;
+
+            scene.add(handleGroup);
+        }
+        createHandle();
+
+        // ============================================
+        // 火球
+        // ============================================
+        class FireBall {
+            constructor() {
+                const geo = new THREE.SphereGeometry(1, 32, 32);
+                const mat = new THREE.ShaderMaterial({
+                    uniforms: {
+                        time: { value: 0 },
+                        brightness: { value: 0 },
+                        seed: { value: new THREE.Vector4(Math.random(), Math.random(), Math.random(), Math.random()) }
+                    },
+                    vertexShader: `
+                        uniform float time;
+                        uniform vec4 seed;
+                        varying vec3 vNormal;
+                        varying float vNoise;
+                        void main() {
+                            vNormal = normalize(normalMatrix * normal);
+                            float noise = sin(position.x * 12.0 + time * 6.0 + seed.x * 10.0) *
+                                          sin(position.y * 12.0 + time * 5.0 + seed.y * 10.0) *
+                                          sin(position.z * 12.0 + time * 7.0 + seed.z * 10.0);
+                            vNoise = noise;
+                            vec3 pos = position * (1.0 + noise * 0.1);
+                            gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+                        }
+                    `,
+                    fragmentShader: `
+                        uniform float brightness;
+                        varying vec3 vNormal;
+                        varying float vNoise;
+                        void main() {
+                            float fresnel = pow(1.0 - abs(dot(vNormal, vec3(0, 0, 1))), 2.0);
+                            vec3 coreColor = vec3(1.0, 0.9, 0.7);
+                            vec3 edgeColor = vec3(1.0, 0.45, 0.15);
+                            vec3 color = mix(coreColor, edgeColor, fresnel);
+                            color += vec3(0.12, 0.06, 0.0) * vNoise;
+                            gl_FragColor = vec4(color * brightness, brightness * (0.85 + fresnel * 0.15));
+                        }
+                    `,
+                    transparent: true,
+                    blending: THREE.AdditiveBlending,
+                    depthWrite: false
+                });
+
+                this.mesh = new THREE.Mesh(geo, mat);
+                this.mesh.position.copy(FIREBALL_POS);
+
+                // グロー
+                const glowGeo = new THREE.SphereGeometry(1, 16, 16);
+                const glowMat = new THREE.MeshBasicMaterial({
+                    color: 0xff4400,
+                    transparent: true,
+                    opacity: 0,
+                    blending: THREE.AdditiveBlending
+                });
+                this.glow = new THREE.Mesh(glowGeo, glowMat);
+                this.glow.position.copy(FIREBALL_POS);
+            }
+
+            addToScene() {
+                scene.add(this.mesh);
+                scene.add(this.glow);
+            }
+
+            removeFromScene() {
+                scene.remove(this.mesh);
+                scene.remove(this.glow);
+            }
+
+            update(time, size, brightness, posY = 0) {
+                this.mesh.material.uniforms.time.value = time;
+                this.mesh.material.uniforms.brightness.value = brightness;
+                this.mesh.position.y = posY;
+                this.mesh.scale.setScalar(size);
+                this.glow.position.y = posY;
+                this.glow.scale.setScalar(size * 1.5);
+                this.glow.material.opacity = brightness * 0.1;
+            }
+
+            setVisible(visible) {
+                this.mesh.visible = visible;
+                this.glow.visible = visible;
+            }
+        }
+
+        // ============================================
+        // 線香花火クラス
+        // ============================================
+        class SenkoHanabi {
+            constructor(type) {
+                this.type = type;
+                this.config = HANABI_TYPES[type];
+                this.totalDuration = this.config.duration[0] + 
+                    Math.random() * (this.config.duration[1] - this.config.duration[0]);
+                this.elapsedTime = 0;
+                this.phase = null;
+                this.isLit = false;
+                this.isDead = false;
+                this.fireBallDropped = false;
+                this.fireBallSize = 0;
+                this.globalTime = 0;
+                this.droppingBall = null;
+
+                // タイプ別火花システム
+                if (type === 'type1') {
+                    this.sparkSystem = new Type1SparkSystem(scene);
+                } else if (type === 'type2') {
+                    this.sparkSystem = new Type2SparkSystem(scene);
+                } else {
+                    this.sparkSystem = new Type3SparkSystem(scene);
+                }
+                this.sparkSystem.addToScene();
+
+                this.fireBall = new FireBall();
+                this.fireBall.addToScene();
+
+                handleTip.visible = true;
+            }
+
+            light() {
+                if (this.isLit || this.isDead) return;
+                this.isLit = true;
+                this.phase = 'TSUBOMI';
+                handleTip.visible = false;
+                document.getElementById('start-btn').disabled = true;
+                document.getElementById('start-btn').textContent = '燃焼中...';
+            }
+
+            update(dt) {
+                if (!this.isLit || this.isDead) return;
+
+                this.elapsedTime += dt;
+                this.globalTime += dt;
+                const progress = Math.min(1, this.elapsedTime / this.totalDuration);
+
+                this.updatePhase(progress);
+
+                if (!this.fireBallDropped) {
+                    this.updateFireBall(progress);
+                    this.generateSparks(progress, dt);
+                    if (progress >= 1) this.dropFireBall();
+                }
+
+                // 火花システム更新
+                if (this.type === 'type2') {
+                    this.sparkSystem.update(dt, this.globalTime);
+                } else {
+                    this.sparkSystem.update(dt);
+                }
+
+                // 落下中の火球
+                if (this.droppingBall) {
+                    this.droppingBall.vy -= 3.5 * dt;
+                    this.droppingBall.y += this.droppingBall.vy * dt;
+                    this.droppingBall.opacity -= dt * 2.0;
+                    
+                    const dropSize = this.droppingBall.size * (0.15 + this.droppingBall.opacity * 0.85);
+                    this.fireBall.update(this.globalTime, dropSize, this.droppingBall.opacity, this.droppingBall.y);
+
+                    if (this.droppingBall.opacity <= 0 || this.droppingBall.y < -5) {
+                        this.droppingBall = null;
+                        this.fireBall.setVisible(false);
+                    }
+                }
+
+                // 終了判定
+                if (this.fireBallDropped && !this.droppingBall && this.sparkSystem.sparks.length === 0) {
+                    this.isDead = true;
+                    document.getElementById('start-btn').disabled = false;
+                    document.getElementById('start-btn').textContent = '🔥 もう一度';
+                }
+
+                this.updateUI();
+            }
+
+            updatePhase(progress) {
+                if (progress < 0.12) this.phase = 'TSUBOMI';
+                else if (progress < 0.28) this.phase = 'BOTAN';
+                else if (progress < 0.72) this.phase = 'MATSUBA';
+                else this.phase = 'CHIRIGIKU';
+            }
+
+            updateFireBall(progress) {
+                const intensity = this.config.sparkIntensity;
+                let targetSize, brightness, tremble;
+                const t = this.globalTime;
+
+                const baseSize = 0.016;
+                const maxSize = 0.035 * Math.sqrt(intensity);
+
+                switch (this.phase) {
+                    case 'TSUBOMI':
+                        const tp = progress / 0.12;
+                        targetSize = baseSize + (maxSize - baseSize) * tp * 0.5;
+                        brightness = 0.5 + tp * 0.4;
+                        tremble = 0.002;
+                        break;
+                    case 'BOTAN':
+                        targetSize = maxSize * 0.8;
+                        brightness = 0.9;
+                        tremble = 0.004;
+                        break;
+                    case 'MATSUBA':
+                        targetSize = maxSize;
+                        brightness = 1.0;
+                        tremble = 0.006;
+                        break;
+                    case 'CHIRIGIKU':
+                        const cp = (progress - 0.72) / 0.28;
+                        targetSize = maxSize * (1 - cp * 0.4);
+                        brightness = 1.0 - cp * 0.4;
+                        tremble = 0.003 * (1 - cp * 0.6);
+                        break;
+                }
+
+                this.fireBallSize += (targetSize - this.fireBallSize) * 0.1;
+                const shake = Math.sin(t * 35) * tremble + Math.sin(t * 53) * tremble * 0.6;
+
+                this.fireBall.update(t, this.fireBallSize + shake, brightness, 0);
+            }
+
+            generateSparks(progress, dt) {
+                const intensity = this.config.sparkIntensity;
+                const range = this.config.sparkRange;
+                let rate, speed, life, size;
+
+                switch (this.phase) {
+                    case 'TSUBOMI':
+                        rate = 8 * intensity;
+                        speed = 0.8 * range;
+                        life = 0.25;
+                        size = 0.8;
+                        break;
+                    case 'BOTAN':
+                        rate = 40 * intensity;
+                        speed = 1.5 * range;
+                        life = 0.45;
+                        size = 1.0;
+                        break;
+                    case 'MATSUBA':
+                        rate = 85 * intensity;
+                        speed = 2.2 * range;
+                        life = 0.65;
+                        size = 1.2;
+                        break;
+                    case 'CHIRIGIKU':
+                        const fade = (progress - 0.72) / 0.28;
+                        rate = 35 * intensity * (1 - fade * 0.8);
+                        speed = 1.2 * range * (1 - fade * 0.4);
+                        life = 0.4 * (1 - fade * 0.4);
+                        size = 0.9;
+                        break;
+                }
+
+                const count = rate * dt;
+                const whole = Math.floor(count);
+                const frac = count - whole;
+
+                for (let i = 0; i < whole + (Math.random() < frac ? 1 : 0); i++) {
+                    const theta = Math.random() * Math.PI * 2;
+                    const phi = Math.random() * Math.PI;
+                    const spd = speed * (0.25 + Math.random() * 1.0);
+
+                    // 火球位置から生成
+                    this.sparkSystem.createSpark(
+                        FIREBALL_POS.x,
+                        FIREBALL_POS.y,
+                        FIREBALL_POS.z,
+                        Math.sin(phi) * Math.cos(theta) * spd,
+                        Math.sin(phi) * Math.sin(theta) * spd - 0.2,
+                        Math.cos(phi) * spd,
+                        life * (0.5 + Math.random() * 1.0),
+                        size * (0.5 + Math.random() * 1.0)
+                    );
+                }
+            }
+
+            dropFireBall() {
+                if (this.fireBallDropped) return;
+                this.fireBallDropped = true;
+
+                this.droppingBall = {
+                    y: FIREBALL_POS.y,
+                    vy: 0,
+                    opacity: 1.0,
+                    size: this.fireBallSize
+                };
+            }
+
+            updateUI() {
+                const info = PHASES[this.phase];
+                if (info) {
+                    document.getElementById('phase-name').textContent = info.name;
+                    document.getElementById('phase-name').style.color = info.color;
+                    document.getElementById('phase-reading').textContent = info.reading;
+                    document.getElementById('phase-description').textContent = info.description;
+                }
+
+                const remaining = Math.max(0, this.totalDuration - this.elapsedTime);
+                document.getElementById('time-display').textContent = 
+                    this.fireBallDropped ? '− 終 −' : `${remaining.toFixed(1)}秒`;
+            }
+
+            dispose() {
+                this.fireBall.removeFromScene();
+                this.sparkSystem.removeFromScene();
+                if (this.sparkSystem.dispose) this.sparkSystem.dispose();
+            }
+        }
+
+        // ============================================
+        // メイン
+        // ============================================
+        let senkoHanabi = null;
+        let lastTime = performance.now();
+
+        function startHanabi() {
+            if (senkoHanabi) senkoHanabi.dispose();
+            senkoHanabi = new SenkoHanabi(currentType);
+            senkoHanabi.light();
+        }
+
+        document.getElementById('start-btn').addEventListener('click', startHanabi);
+
+        document.querySelectorAll('.type-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentType = btn.dataset.type;
+                
+                if (!senkoHanabi || senkoHanabi.isDead || !senkoHanabi.isLit) {
+                    if (senkoHanabi) senkoHanabi.dispose();
+                    senkoHanabi = new SenkoHanabi(currentType);
+                }
+            });
+        });
+
+        let uiVisible = true;
+        document.getElementById('toggle-ui-btn').addEventListener('click', () => {
+            uiVisible = !uiVisible;
+            document.getElementById('ui-panel').classList.toggle('hidden', !uiVisible);
+            document.getElementById('instructions').classList.toggle('hidden', !uiVisible);
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const now = performance.now();
+            const dt = Math.min(0.1, (now - lastTime) / 1000);
+            lastTime = now;
+
+            controls.update();
+
+            if (senkoHanabi) {
+                senkoHanabi.update(dt);
+            }
+
+            composer.render();
+        }
+
+        senkoHanabi = new SenkoHanabi(currentType);
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
